@@ -72,6 +72,7 @@ With this detailed approach, the RESTful API will effectively handle product inf
 # Question 2:
 
 ```
+
 import concurrent.futures
 import csv
 from dateutil import relativedelta
@@ -79,8 +80,27 @@ import time
 from datetime import date, datetime, timedelta
 from urllib3 import Retry
 from googleads.errors import GoogleAdsException
+from googleads import oauth2
+import logging
 
 CSV_FILE = 'report.csv' 
+
+# Set up logger
+logger = logging.getLogger('google_ads')  
+logger.setLevel(logging.DEBUG)
+
+# File handler  
+fh = logging.FileHandler('errors.log')
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+fh.setFormatter(formatter)
+logger.addHandler(fh)
+
+def handle_error(date, error):
+    logger.error(f"Error fetching {date}: {error}")
+
+with open(CSV_FILE, 'w') as f:
+    writer = csv.writer(f)   
+    writer.writerow(['date', 'impressions', 'clicks'])
 
 # Helper function to convert date to string
 def date_to_str(date):
@@ -91,26 +111,30 @@ def fetch_data(date):
     try:
         # Make google ads API call
         pass
-    except TimeoutError:
-        #Handle TimeoutError  
-        raise TimeoutError
-    except ConnectionError:
-        #Handle connection errors
-        raise ConnectionError
-    except GoogleAdsException as e:  
-        #Handle auth errors  
-        raise GoogleAdsException
+    except Exception as e:  
+        handle_error(date, e)
   
 
-def handle_error(date, error):
-    if isinstance(error, TimeoutError):
-        print(f"Timeout error on {date_to_str(date)}") 
-    elif isinstance(error, ConnectionError):
-        print(f"Connection error on {date_to_str(date)}")
-    elif isinstance(error, GoogleAdsException):  
-        print(f"Auth exception on {date_to_str(date)}")
-        #Refresh OAuth token
-        #Retry  
+def refresh_oauth_token():
+
+    # OAuth2 configuration object
+    oauth2_client = oauth2.GoogleRefreshTokenClient(
+        client_id=CLIENT_ID, 
+        client_secret=CLIENT_SECRET,
+        refresh_token=REFRESH_TOKEN 
+    )
+
+    try:
+        # Refresh authorization
+        oauth2_client.RefreshAccessToken()
+
+    except oauth2.errors.GoogleAdsException as ex:
+        handle_error(date, ex)
+
+    else:
+        print("Successfully refreshed OAuth token!")
+        # Updated access token available 
+        # oauth2_client.access_token
 
 # Function to save data to CSV  
 def save_to_csv(data):
@@ -118,47 +142,28 @@ def save_to_csv(data):
         writer = csv.writer(f) 
         writer.writerow((data['date'], data['impressions'], data['clicks']))
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5, timeout=30) as executor:
-      
-        dates = get_dates(start_date, end_date)
-      
-        futures = [executor.submit(fetch_data, date)  
-                    for date in dates]
-              
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                data = future.result() 
-            except Exception as e:  
-                handle_error(date, e)
-            else:
-                save_to_csv(data)
-
-# Function for error handling      
-def handle_error(date, error):
-    print(f"Error fetching data for {date_to_str(date)}: {error}")  
-    # Log error  
-
 # Parallel processing using ThreadPoolExecutor  
 def fetch_parallel(start_date, end_date):
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = [executor.submit(fetch_data, date)  
                    for date in get_dates(start_date, end_date)]
-            
+          
         for future in concurrent.futures.as_completed(futures):
+            date = future.args[0] # Get date  
             try:
                 data = future.result()
-            except Exception as e:
-                handle_error(date, e) 
+            except Exception as e:  
+                handle_error(date, e)
             else:
                 save_to_csv(data)
 
-# Get list of dates between start and end          
+# Get list of dates between start and end        
 def get_dates(start_date, end_date):
     dates = []
     current_date = start_date
     while current_date <= end_date:
         dates.append(current_date)
-        current_date += datetime.timedelta(days=1)  
+        current_date += timedelta(days=1)  
     return dates
 
 # Calculate last 2 years date range   
@@ -254,9 +259,9 @@ for future in concurrent.futures.as_completed(futures):
     try: 
        data = future.result()
     except Error as e: 
-       handle_error()
+       handle_error(data, e)
     else:  
-       save_data()
+       save_data(data)
 ```
 
 This saves the fetched data on success, and retries or logs the failure appropriately.
